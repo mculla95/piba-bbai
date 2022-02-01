@@ -1,0 +1,179 @@
+/*============================================================================
+ Name        : mpu6050_rawread.c
+ Author      : Kiran N < niekiran@gmail.com >
+ Version     :
+ Copyright   : Your copyright notice
+ Description : This Application prints Accelerometer and gyroscope raw and G values using MPU6050 sensor
+ TODOs for the students :
+ ============================================================================*/
+
+
+/*================================================
+BBB_expansion_header_P9_pins     MPU6050 pins
+===================================================
+P9_19                              SCL
+P9_20                              SDA
+P9_3                               VCC 3.3v
+P9_1                               GND
+==================================================== */
+
+/*
+ * Datasheet refs
+ * 1. MPU-6000 and MPU-6050 Product Specification Revision 3.4
+ * 2. MPU-6000 and MPU-6050 Register Map and Descriptions Revision 4.2
+ */
+
+
+#include <errno.h>
+#include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <linux/i2c-dev.h>
+#include <sys/ioctl.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <stdint.h>
+
+uint8_t U1_PCM1864_CONFIG[][2] = {
+	{0x00, 0x00}, // Change to Page 0
+	{0x01, 0x40}, // PGA CH1_L to 32dB
+	{0x02, 0x40}, // PGA CH1_R to 32dB
+	{0x03, 0x40}, // PGA CH2_L to 32dB
+	{0x04, 0x40}, // PGA CH2_R to 32dB
+	{0x05, 0x86}, // Enable SMOOTH PGA Change; Independent Link PGA;
+	{0x06, 0x41}, // Polarity: Normal, Channel: VINL1[SE]
+	{0x07, 0x41}, // Polarity: Normal, Channel: VINR1[SE]
+	{0x08, 0x44}, // Polarity: Normal, Channel: VINL3[SE]
+	{0x09, 0x44}, // Polarity: Normal, Channel: VINR3[SE]
+	{0x0A, 0x00}, // Secondary ADC Input: No Selection
+	{0x0B, 0x44}, // RX WLEN: 24bit; TX WLEN: 24 bit; FMT: I2S format
+	{0x10, 0x03}, // GPIO0_FUNC - SCK Out; GPIO0_POL - Normal
+	{0x11, 0x50}, // GPIO3_FUNC - DOUT2; GPIO3_POL - Normal
+	{0x12, 0x04}, // GPIO0_DIR - GPIO0 - Output
+	{0x13, 0x40}, // GPIO3_DIR � GPIO3 - Output
+	{0x20, 0x11}  // MST_MODE: Master; CLKDET_EN: Disable
+};
+
+uint8_t U2_PCM1864_CONFIG[][2] = {
+	{0x00, 0x00}, // Change to Page 0
+	{0x01, 0x40}, // PGA CH1_L to 32dB
+	{0x02, 0x40}, // PGA CH1_R to 32dB
+	{0x03, 0x40}, // PGA CH2_L to 32dB
+	{0x04, 0x40}, // PGA CH2_R to 32dB
+	{0x05, 0x86}, // Enable SMOOTH PGA Change; Independent Link PGA;
+	{0x06, 0x41}, // Polarity: Normal, Channel: VINL1[SE]
+	{0x07, 0x41}, // Polarity: Normal, Channel: VINR1[SE]
+	{0x08, 0x44}, // Polarity: Normal, Channel: VINL3[SE]
+	{0x09, 0x44}, // Polarity: Normal, Channel: VINR3[SE]
+	{0x0A, 0x00}, // Secondary ADC Input: No Selection
+	{0x0B, 0x44}, // RX WLEN: 24bit; TX WLEN: 24 bit; FMT: I2S format
+	{0x10, 0x00}, // GPIO0_FUNC – GPIO0; GPIO0_POL - Normal
+	{0x11, 0x50}, // GPIO3_FUNC - DOUT2; GPIO3_POL - Normal
+	{0x12, 0x00}, // GPIO0_DIR - GPIO0 - Input
+	{0x13, 0x40}, // GPIO3_DIR � GPIO3 - Output
+	{0x20, 0x01}  // MST_MODE: Slave; CLKDET_EN: Enable
+};
+
+
+/* These are the I2C slave addresses of PCM1864 U1 and U2 on the CMB */
+#define U1_PCM1864_I2C_ADDR 0x4A // 0x94/2 =0x4A
+#define U2_PCM1864_I2C_ADDR 0x4B // 0x96/2 =0x4B
+
+
+/* This is the linux OS device file for hte I2C3 controller of the SOC */
+#define I2C_DEVICE_FILE   "/dev/i2c-3"
+
+int fd;
+
+/*write a 8bit "data" to the sensor at the address indicated by "addr" */
+int PCM1864_write(uint8_t addr, uint8_t data)
+{
+  int ret;
+  char buf[2];
+  buf[0]=addr;
+  buf[1]=data;
+  ret = write(fd,buf,2);
+  if (ret <= 0)
+  {
+      perror("write failed\n");
+      return -1;
+  }
+  return 0;
+}
+
+/*read "len" many bytes from "addr" of the sensor in to the adresss indicated by "pBuffer" */
+int PCM1864_read(uint8_t base_addr, char *pBuffer,uint32_t len)
+{
+  int ret;
+  char buf[2];
+  buf[0]=base_addr;
+  ret = write(fd,buf,1);
+  if (ret <= 0)
+  {
+      perror("write address failed\n");
+      return -1;
+  }
+
+  ret = read(fd,pBuffer,len);
+  if(ret <= 0)
+  {
+      perror("read failed\n");
+  }
+  return 0;
+}
+
+
+/* by default mpu6050 will in sleep mode, so disable its sleep mode and also configure 
+ * the full scale ranges for gyro and acc
+ */
+void PCM1864_init1()
+{
+	int i;
+    for (i=0; i<17; i++) {
+    	PCM1864_write(U1_PCM1864_CONFIG[i][0], U1_PCM1864_CONFIG[i][1]);
+        usleep(500);
+    }
+
+}
+void PCM1864_init2()
+{
+	int i;
+    for (i=0; i<17; i++) {
+    	PCM1864_write(U2_PCM1864_CONFIG[i][0], U2_PCM1864_CONFIG[i][1]);
+        usleep(500);
+    }
+
+}
+
+
+int main(void)
+{
+    fd = open(I2C_DEVICE_FILE,O_RDWR);
+     /*first lets open the I2C device file */
+    if (fd < 0) {
+        perror("Failed to open I2C device file.\n");
+        return -1;
+    }
+    
+    /*set the I2C slave address using ioctl I2C_SLAVE command */
+    if (ioctl(fd,I2C_SLAVE,U1_PCM1864_I2C_ADDR) < 0) {
+            perror("Failed to set I2C slave1 address.\n");
+            close(fd);
+            return -1;
+    }
+    
+    PCM1864_init1();
+    
+    if (ioctl(fd,I2C_SLAVE,U2_PCM1864_I2C_ADDR) < 0) {
+            perror("Failed to set I2C slave2 address.\n");
+            close(fd);
+            return -1;
+    }
+
+    PCM1864_init2();
+
+    while(1){};
+}
+
